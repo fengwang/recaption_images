@@ -41,6 +41,12 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
     if img.shape[2] == 4: # such as (128, 128, 4 )
         img = img[:, :, :3]
 
+
+    row, col = img.shape[0], img.shape[1]
+    if row < 128 or col < 128:
+        return '', ''
+
+
     img = imresize(img, (256, 256))
     img = img.transpose(2, 0, 1)
     img = img / 255.
@@ -190,7 +196,6 @@ def caption_it( img, model_path, word_map_path, beam_size=5 ):
 
     # Encode, decode with attention and beam search
     seq, alphas = caption_image_beam_search(encoder, decoder, img, word_map_cache, beam_size)
-    #alphas = torch.FloatTensor(alphas)
 
     words = [ rev_word_map[ind] for ind in seq ]
     w = ' '.join( words[1:-1] )
@@ -232,15 +237,18 @@ def recaption_images( input_folder, output_folder=None ):
     # process images
     images = glob.glob( f'{input_folder}/*.png' ) + glob.glob( f'{input_folder}/*.jpg' ) + glob.glob( f'{input_folder}/*.jpeg' ) + glob.glob( f'{input_folder}/*.bmp' )
     for image in images:
-        print( f'processing {image}' )
-        # generate caption
-        caption = caption_it( image, local_model_path, local_word_map_path )
-        old_image_name = image.rsplit('/', 1)[1]
-        # generate new file name
-        new_image_path = os.path.join( f'{output_folder}', f'{caption}_{old_image_name}' )
-        # copy file
-        shutil.copyfile(image, new_image_path)
-        print( f'rewriting {image} as {new_image_path}' )
+        try:
+            print( f'processing {image}' )
+            # generate caption
+            caption = caption_it( image, local_model_path, local_word_map_path )
+            old_image_name = image.rsplit('/', 1)[1]
+            # generate new file name
+            new_image_path = os.path.join( f'{output_folder}', f'{caption}_{old_image_name}' )
+            # copy file
+            shutil.copyfile(image, new_image_path)
+            print( f'rewriting {image} as {new_image_path}' )
+        except Exception as e:
+            print( f'Failed to process {image}' )
 
 import argparse
 
