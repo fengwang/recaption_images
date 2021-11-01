@@ -5,7 +5,7 @@
 # Example Usage: python3 recaption_images.py -i /home/feng/Downloads/images -o /home/feng/Downloads/recaptioned_images
 # Author: Feng Wang
 # Date: 2021-11-01
-# Dependency: [torch, torchvision, numpy, imageio, tqdm, pillow, glob]
+# Dependency: [torch, torchvision, numpy, imageio, tqdm, pillow, glob, requests]
 # License: AGPL-v3
 #
 
@@ -19,8 +19,8 @@ from imageio import imread
 import os
 import sys
 import glob
-import tqdm
 import shutil
+from requests import get
 
 def imresize( array, resolution ):
     return np.array( Image.fromarray(array).resize( resolution ) )
@@ -37,6 +37,10 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
     if len(img.shape) == 2:
         img = img[:, :, np.newaxis]
         img = np.concatenate([img, img, img], axis=2)
+
+    if img.shape[2] == 4: # such as (128, 128, 4 )
+        img = img[:, :, :3]
+
     img = imresize(img, (256, 256))
     img = img.transpose(2, 0, 1)
     img = img / 255.
@@ -155,33 +159,37 @@ def caption_image_beam_search(encoder, decoder, image_path, word_map, beam_size=
 
 
 
-checkpoint = None
+checkpoint_cache = None
 rev_word_map = None
-word_map = None
+word_map_cache = None
 
-# caption_it( '/home/feng/Downloads/t0172e549c7b3337a63.png', '/home/feng/Downloads/BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq.pth.tar', '/home/feng/Downloads/WORDMAP_coco_5_cap_per_img_5_min_word_freq.json' )
 def caption_it( img, model_path, word_map_path, beam_size=5 ):
 
-    global checkpoint
-    if checkpoint is None:
-        checkpoint = torch.load(model_path, map_location=str(device))
+    # adding the folder to path
+    dirname = os.path.dirname(os.path.realpath(__file__))
+    if not dirname in sys.path:
+        sys.path.append( dirname )
 
-    decoder = checkpoint['decoder']
+    global checkpoint_cache
+    if checkpoint_cache is None:
+        checkpoint_cache = torch.load(model_path, map_location=str(device))
+
+    decoder = checkpoint_cache['decoder']
     decoder = decoder.to(device)
     decoder.eval()
-    encoder = checkpoint['encoder']
+    encoder = checkpoint_cache['encoder']
     encoder = encoder.to(device)
     encoder.eval()
 
     global rev_word_map
-    global word_map
-    if rev_word_map is None or word_map is None:
+    global word_map_cache
+    if rev_word_map is None or word_map_cache is None:
         with open(word_map_path, 'r') as j:
-            word_map = json.load(j)
-        rev_word_map = {v: k for k, v in word_map.items()}  # ix2word
+            word_map_cache = json.load(j)
+        rev_word_map = {v: k for k, v in word_map_cache.items()}  # ix2word
 
     # Encode, decode with attention and beam search
-    seq, alphas = caption_image_beam_search(encoder, decoder, img, word_map, beam_size)
+    seq, alphas = caption_image_beam_search(encoder, decoder, img, word_map_cache, beam_size)
     #alphas = torch.FloatTensor(alphas)
 
     words = [ rev_word_map[ind] for ind in seq ]
@@ -210,24 +218,26 @@ def recaption_images( input_folder, output_folder=None ):
     # the output folder
     if output_folder is None:
         output_folder = f'{input_folder}_with_caption'
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
+
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
 
     # the model folder
     user_model_path = os.path.join( os.path.expanduser('~'), '.deepoffice', 'recaption_images', 'model' )
 
     # download model files
-    model_path = download_remote_model( user_model_path, 'TODO' )
-    word_map_path = download_remote_model( user_model_path, 'TODO' )
+    local_model_path = download_remote_model( user_model_path, 'https://github.com/fengwang/recaption_images/releases/download/initial_commit/BEST_checkpoint_coco_5_cap_per_img_5_min_word_freq_regenerated.pth.tar' )
+    local_word_map_path = download_remote_model( user_model_path, 'https://github.com/fengwang/recaption_images/releases/download/initial_commit/WORDMAP_coco_5_cap_per_img_5_min_word_freq.json' )
 
     # process images
     images = glob.glob( f'{input_folder}/*.png' ) + glob.glob( f'{input_folder}/*.jpg' ) + glob.glob( f'{input_folder}/*.jpeg' ) + glob.glob( f'{input_folder}/*.bmp' )
-    for image in tqdm.tqdm(images):
+    for image in images:
+        print( f'processing {image}' )
         # generate caption
-        caption = caption_it( image, model_path, word_map_path )
-        old_image_name = model_url.rsplit('/', 1)[1]
+        caption = caption_it( image, local_model_path, local_word_map_path )
+        old_image_name = image.rsplit('/', 1)[1]
         # generate new file name
-        new_image_path = f'{output_folder}/{caption}_{old_image_name}'
+        new_image_path = os.path.join( f'{output_folder}', f'{caption}_{old_image_name}' )
         # copy file
         shutil.copyfile(image, new_image_path)
         print( f'rewriting {image} as {new_image_path}' )
